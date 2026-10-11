@@ -6,7 +6,6 @@ import easyocr
 from ultralytics import YOLO
 import pandas as pd
 import database as db
-import os
 
 # 1. تهيئة قاعدة البيانات
 try:
@@ -17,20 +16,14 @@ except Exception:
 st.set_page_config(page_title="نظام ALPR المتكامل", layout="wide")
 st.title("🚗 نظام التعرف وإدارة لوحات السيارات")
 
-# 2. تحميل النماذج بآلية حماية من أخطاء التحميل الشبكي
+# 2. تحميل النماذج
 @st.cache_resource
 def load_models():
-    # تحميل YOLO
     yolo_model = YOLO("yolov8n.pt") 
-    
-    # تحميل EasyOCR للغة الإنجليزية أولاً لضمان عدم استهلاك الذاكرة وحجم التحميل
     try:
         ocr_reader = easyocr.Reader(['en'], gpu=False, download_enabled=True)
-    except Exception as e:
-        # خيار احتياطي في حال فشل التحميل
-        st.error("حدث خطأ أثناء تحميل نموذج القراءة. يرجى إعادة تحديث الصفحة.")
+    except Exception:
         ocr_reader = easyocr.Reader(['en'], gpu=False, download_enabled=False)
-        
     return yolo_model, ocr_reader
 
 model, reader = load_models()
@@ -61,10 +54,7 @@ with tab1:
                         plate_crop = img_np[y1:y2, x1:x2]
                         
                         if plate_crop.size > 0:
-                            # تكبير اللوحة
                             plate_resized = cv2.resize(plate_crop, (0, 0), fx=2.0, fy=2.0, interpolation=cv2.INTER_CUBIC)
-                            
-                            # القراءة عبر OCR
                             ocr_results = reader.readtext(plate_resized)
                             
                             if ocr_results:
@@ -78,7 +68,6 @@ with tab1:
                                 with col2:
                                     st.image(plate_crop, caption="اللوحة المقتطعة", use_container_width=True)
                 
-                # خيار احتياطي في حال عدم عثور YOLO على مربع
                 if not plate_found:
                     ocr_results = reader.readtext(img_np)
                     if ocr_results:
@@ -99,7 +88,6 @@ with tab2:
         if logs:
             df = pd.DataFrame(logs, columns=["المعرف (ID)", "رقم اللوحة", "نسبة الدقة %", "تاريخ ووقت الاكتشاف"])
             st.dataframe(df, use_container_width=True)
-            
             csv = df.to_csv(index=False).encode('utf-8-sig')
             st.download_button(
                 label="📥 تحميل السجل كملف CSV",
