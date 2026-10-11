@@ -91,7 +91,8 @@ with tab1:
                             st.image(yolo_results[0].plot(), caption="تحديد الذكاء الاصطناعي (YOLO)", use_container_width=True)
                     else:
                         st.warning("لم يتم العثور على أرقام أو نصوص واضحة.")
-                        with tab2:
+
+with tab2:
     st.subheader("سجلات السيارات المحفوظة في قاعدة البيانات")
     try:
         logs = db.get_all_logs()
