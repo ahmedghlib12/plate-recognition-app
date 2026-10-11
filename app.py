@@ -25,7 +25,12 @@ model, reader = load_models()
 
 # 3. دالة معالجة الظروف الصعبة (الإضاءة والضبابية)
 def preprocess_image(img):
-    gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
+    # التحويل للرمادي
+    if len(img.shape) == 3:
+        gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
+    else:
+        gray = img
+        
     clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
     enhanced = clahe.apply(gray)
     filtered = cv2.bilateralFilter(enhanced, 11, 17, 17)
@@ -48,26 +53,57 @@ with tab1:
             st.image(image, caption="الصورة الأصلية", use_container_width=True)
             
         if st.button("تحليل الصورة واستخراج اللوحة"):
-            with st.spinner("جاري الكشف بـ YOLO وقراءة النص بـ OCR..."):
-                # كشف الأجسام باستخدام YOLO
+            with st.spinner("جاري الكشف بـ YOLO واقتصاص اللوحة وقراءة النص..."):
+                # 1. كشف موقع اللوحة باستخدام YOLO
                 yolo_results = model(img_np)
+                boxes = yolo_results[0].boxes
                 
-                # تطبيق تحسين الصورة المتقدم
-                processed_img = preprocess_image(img_np)
-                ocr_results = reader.readtext(processed_img)
+                plate_found = False
+
+                if len(boxes) > 0:
+                    for box in boxes:
+                        # استخراج إحداثيات اللوحة المكتشفة
+                        x1, y1, x2, y2 = map(int, box.xyxy[0])
+                        
+                        # قص منطقة اللوحة فقط من الصورة
+                        plate_crop = img_np[y1:y2, x1:x2]
+                        
+                        if plate_crop.size > 0:
+                            # تكبير قصاصة اللوحة مرتين لتحسين وضوح الحروف والأرقام
+                            plate_resized = cv2.resize(plate_crop, None, fx=2.0, fy=2.0, interpolation=cv2.INTER_CUBIC)
+                            
+                            # تطبيق المعالجة المسبقة على القصاصة المركزية فقط
+                            processed_plate = preprocess_image(plate_resized)
+                            
+                            # قراءة النص من اللوحة المقتطعة
+                            ocr_results = reader.readtext(processed_plate)
+                            
+                            if ocr_results:
+                                plate_found = True
+                                for bbox, text, prob in ocr_results:
+                                    # تنظيف النص المكتشف من الرموز الغريبة
+                                    clean_text = "".join([c for c in text if c.isalnum() or c in ['-', ' ']]).strip()
+                                    if len(clean_text) > 1:
+                                        db.insert_plate(clean_text, float(prob * 100))
+                                        st.success(f"النص المكتشف: {clean_text} | نسبة الثقة: {prob*100:.1f}%")
+                                
+                                with col2:
+                                    st.image(plate_crop, caption="اللوحة المقتطعة والمكبرة", use_container_width=True)
                 
-                if ocr_results:
-                    st.success("تم التعرف على النص وتحسينه بنجاح!")
-                    for bbox, text, prob in ocr_results:
-                        if prob > 0.20 and len(text.strip()) > 1:
-                            # حفظ السجل في قاعدة البيانات
-                            db.insert_plate(text, float(prob * 100))
-                            st.write(f"- النص المكتشف: {text} | نسبة الثقة: {prob*100:.1f}%")
-                    
-                    with col2:
-                        st.image(yolo_results[0].plot(), caption="تحديد الذكاء الاصطناعي (YOLO)", use_container_width=True)
-                else:
-                    st.warning("لم يتم العثور على أرقام أو نصوص واضحة.")
+                # إذا لم يحدد YOLO صندوقاً صريحاً، يتم الفحص الاحتياطي على كامل الصورة
+                if not plate_found:
+                    processed_img = preprocess_image(img_np)
+                    ocr_results = reader.readtext(processed_img)
+                    if ocr_results:
+                        for bbox, text, prob in ocr_results:
+                            clean_text = "".join([c for c in text if c.isalnum() or c in ['-', ' ']]).strip()
+                            if prob > 0.15 and len(clean_text) > 1:
+                                db.insert_plate(clean_text, float(prob * 100))
+                                st.success(f"النص المكتشف: {clean_text} | نسبة الثقة: {prob*100:.1f}%")
+                        with col2:
+                            st.image(yolo_results[0].plot(), caption="تحديد الذكاء الاصطناعي (YOLO)", use_container_width=True)
+                    else:
+                        st.warning("لم يتم العثور على أرقام أو نصوص واضحة.")
 
 with tab2:
     st.subheader("سجلات السيارات المحفوظة في قاعدة البيانات")
@@ -77,7 +113,7 @@ with tab2:
         df = pd.DataFrame(logs, columns=["المعرف (ID)", "رقم اللوحة", "نسبة الدقة %", "تاريخ ووقت الاكتشاف"])
         st.dataframe(df, use_container_width=True)
         
-        # زر إضافي لتنزيل السجلات كملف CSV
+        # زر لتنزيل السجلات كملف CSV
         csv = df.to_csv(index=False).encode('utf-8-sig')
         st.download_button(
             label="📥 تحميل السجل كملف CSV",
