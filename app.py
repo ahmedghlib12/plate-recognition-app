@@ -1,74 +1,89 @@
-import streamlit as st
+from datetime import datetime
+
+import cv2
 import numpy as np
-from PIL import Image, ImageEnhance, ImageOps
-import pytesseract
 import pandas as pd
-import database as db
+import streamlit as st
+from PIL import Image
 
-# مسار محرك Tesseract المعتمد في بيئة Linux على Streamlit Cloud
-pytesseract.pytesseract.tesseract_cmd = '/usr/bin/tesseract'
+from src.detector import find_plate
+from src.ocr import available_languages, read_plate
+from src.parser import parse_plate
+from src.preprocessing import resize_keep_ratio
 
-# تهيئة قاعدة البيانات
-try:
-    db.init_db()
-except Exception:
-    pass
+st.set_page_config(page_title="كشف لوحات السيارات", page_icon="🚗", layout="centered")
 
-st.set_page_config(page_title="نظام ALPR المستقر", page_icon="🚗", layout="wide")
-st.title("🚗 نظام التعرف وإدارة لوحات السيارات (ALPR System)")
+if "history" not in st.session_state:
+    st.session_state.history = []
 
-tab1, tab2 = st.tabs(["🔍 فحص وتحليل صورة", "📊 سجل اللوحات المكتشفة"])
+st.markdown("<h2 style='text-align:center'>🚗 كشف واستخراج رقم لوحة السيارة</h2>",
+            unsafe_allow_html=True)
+st.caption("يعمل مع الصور غير الواضحة أو المطموسة أو التي عليها طين، بمعالجة الصور والذكاء الاصطناعي.")
 
-with tab1:
-    st.subheader("رفع صورة السيارة واستخراج رقم اللوحة")
-    uploaded_file = st.file_uploader("قم برفع صورة السيارة هنا...", type=["jpg", "jpeg", "png"])
+with st.sidebar:
+    st.header("الإعدادات")
+    show_debug = st.checkbox("عرض تفاصيل المعالجة", value=False)
+    langs = available_languages()
+    st.write("لغات OCR المتوفرة:", ", ".join(langs))
+    if "ara" not in langs:
+        st.warning("حزمة العربية غير مثبتة. تأكد من وجود tesseract-ocr-ara في packages.txt")
 
-    if uploaded_file is not None:
-        image = Image.open(uploaded_file).convert('RGB')
+source = st.radio("مصدر الصورة", ["رفع صورة", "الكاميرا"], horizontal=True)
+file = (st.file_uploader("ارفع صورة السيارة", type=["jpg", "jpeg", "png"])
+        if source == "رفع صورة" else st.camera_input("التقط صورة"))
 
-        col1, col2 = st.columns(2)
-        with col1:
-            st.image(image, caption="الصورة المرفوعة", use_container_width=True)
+if file:
+    image = Image.open(file).convert("RGB")
+    st.image(image, caption="الصورة المرفوعة", use_container_width=True)
 
-        if st.button("بدء عملية الفحص واستخراج رقم اللوحة", type="primary"):
-            with st.spinner("جاري معالجة الصورة واستخراج النص..."):
-                try:
-                    # تحسين الصورة باستخدام Pillow المدمجة في بايثون
-                    gray_img = ImageOps.grayscale(image)
-                    enhanced_img = ImageEnhance.Contrast(gray_img).enhance(2.0)
+    if st.button("بدء عملية الفحص واستخراج رقم اللوحة", type="primary"):
+        try:
+            with st.spinner("جاري المعالجة..."):
+                img_bgr = resize_keep_ratio(cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR))
+                plate, annotated, box = find_plate(img_bgr)
+                if plate is None:
+                    st.warning("لم يتم العثور على لوحة، سنقرأ الصورة كاملة.")
+                    plate = img_bgr
+                else:
+                    st.image(cv2.cvtColor(annotated, cv2.COLOR_BGR2RGB),
+                             caption="موقع اللوحة المكتشف", use_container_width=True)
+                best, attempts = read_plate(plate)
 
-                    # استخراج النص عبر Tesseract مباشرة
-                    text = pytesseract.image_to_string(enhanced_img, config='--oem 3 --psm 6')
-                    clean_text = "".join([c for c in text if c.isalnum() or c in ['-', ' ']]).strip()
+            st.image(cv2.cvtColor(plate, cv2.COLOR_BGR2RGB), caption="اللوحة المقصوصة")
 
-                    if len(clean_text) >= 2:
-                        db.insert_plate(clean_text, 90.0)
-                        st.success(f"✅ **تم استخراج رقم اللوحة بنجاح:** `{clean_text}`")
-                        with col2:
-                            st.image(enhanced_img, caption="الصورة المعالجة للـ OCR", use_container_width=True)
-                    else:
-                        # محاولة قراءة الصورة الأصلية بدون تحسين في حال عدم التمكن
-                        raw_text = pytesseract.image_to_string(image, config='--oem 3 --psm 3')
-                        raw_clean = "".join([c for c in raw_text if c.isalnum() or c in ['-', ' ']]).strip()
-                        
-                        if len(raw_clean) >= 2:
-                            db.insert_plate(raw_clean, 85.0)
-                            st.success(f"✅ **تم استخراج رقم اللوحة بنجاح:** `{raw_clean}`")
-                        else:
-                            st.warning("⚠️ لم يتم العثور على نص واضح، يرجى تجربة رفع صورة أقرب للوحة السيارة.")
-                except Exception as e:
-                    st.error(f"حدث خطأ أثناء المعالجة: {str(e)}")
+            if best:
+                parsed = parse_plate(best["text"])
+                final = parsed["formatted"] if parsed else best["text"]
+                st.success(f"رقم اللوحة: {final}")
+                c1, c2 = st.columns(2)
+                c1.metric("نسبة الثقة", f"{best['conf']:.0f}%")
+                c2.metric("طريقة المعالجة", best["method"].split(" (")[0])
+                if parsed:
+                    st.write(f"رمز المحافظة: **{parsed['code']}** | الحرف: **{parsed['letter']}** | الرقم: **{parsed['number']}**")
+                if best["conf"] < 50:
+                    st.info("الثقة منخفضة. جرّب صورة أوضح أو بزاوية أقرب للمواجهة.")
+                st.image(best["image"], caption="اللوحة بعد التحسين", clamp=True)
 
-with tab2:
-    st.subheader("سجلات قاعدة البيانات (Database Logs)")
-    try:
-        logs = db.get_all_logs()
-        if logs:
-            df = pd.DataFrame(logs, columns=["المعرف", "رقم اللوحة", "نسبة الدقة %", "تاريخ ووقت التسجيل"])
-            st.dataframe(df, use_container_width=True)
-            csv = df.to_csv(index=False).encode('utf-8-sig')
-            st.download_button(label="📥 تحميل السجل CSV", data=csv, file_name='plates_log.csv', mime='text/csv')
-        else:
-            st.info("لا توجد سجلات محفوظة حالياً.")
-    except Exception:
-        st.error("تعذر الاتصال بقاعدة البيانات.")
+                st.session_state.history.append({
+                    "الوقت": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    "الرقم": final,
+                    "الثقة %": round(best["conf"]),
+                })
+            else:
+                st.error("تعذّر استخراج الرقم. جرّب صورة أوضح.")
+
+            if show_debug:
+                st.subheader("كل المحاولات")
+                for a in attempts:
+                    st.write(f"{a['method']} → `{a['text']}` ({a['conf']:.0f}%)")
+                    st.image(a["image"], clamp=True)
+        except Exception as e:
+            st.error(f"حدث خطأ أثناء المعالجة: {e}")
+
+if st.session_state.history:
+    st.divider()
+    st.subheader("سجل النتائج")
+    df = pd.DataFrame(st.session_state.history)
+    st.dataframe(df, use_container_width=True)
+    st.download_button("تنزيل السجل CSV", df.to_csv(index=False).encode("utf-8-sig"),
+                       "plates.csv", "text/csv")
