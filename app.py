@@ -5,9 +5,10 @@ import pytesseract
 import pandas as pd
 import database as db
 
-# مسار tesseract المعتمد في Streamlit Cloud
+# مسار محرك Tesseract المعتمد في بيئة Linux على Streamlit Cloud
 pytesseract.pytesseract.tesseract_cmd = '/usr/bin/tesseract'
 
+# تهيئة قاعدة البيانات
 try:
     db.init_db()
 except Exception:
@@ -30,37 +31,33 @@ with tab1:
             st.image(image, caption="الصورة المرفوعة", use_container_width=True)
 
         if st.button("بدء عملية الفحص واستخراج رقم اللوحة", type="primary"):
-            with st.spinner("جاري تحليل الصورة وتجربة الخوارزميات المختلفة..."):
-                extracted_text = ""
-                
-                # قائمة بالتجريبية: الصورة الأصلية، الصورة المحسنة التباين، الصورة الرمادية
-                gray_img = ImageOps.grayscale(image)
-                enhancer = ImageEnhance.Contrast(gray_img)
-                enhanced_img = enhancer.enhance(2.5)
+            with st.spinner("جاري معالجة الصورة واستخراج النص..."):
+                try:
+                    # تحسين الصورة باستخدام Pillow المدمجة في بايثون
+                    gray_img = ImageOps.grayscale(image)
+                    enhanced_img = ImageEnhance.Contrast(gray_img).enhance(2.0)
 
-                sources_to_try = [image, gray_img, enhanced_img]
-                psm_modes = ['--psm 6', '--psm 11', '--psm 3']
+                    # استخراج النص عبر Tesseract مباشرة
+                    text = pytesseract.image_to_string(enhanced_img, config='--oem 3 --psm 6')
+                    clean_text = "".join([c for c in text if c.isalnum() or c in ['-', ' ']]).strip()
 
-                # محاولة القراءة بأكثر من النمط
-                for img_src in sources_to_try:
-                    for psm in psm_modes:
-                        config = f'{psm} -c tessedit_char_whitelist=0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz'
-                        text = pytesseract.image_to_string(img_src, config=config)
-                        clean = "".join([c for c in text if c.isalnum() or c in ['-', ' ']]).strip()
+                    if len(clean_text) >= 2:
+                        db.insert_plate(clean_text, 90.0)
+                        st.success(f"✅ **تم استخراج رقم اللوحة بنجاح:** `{clean_text}`")
+                        with col2:
+                            st.image(enhanced_img, caption="الصورة المعالجة للـ OCR", use_container_width=True)
+                    else:
+                        # محاولة قراءة الصورة الأصلية بدون تحسين في حال عدم التمكن
+                        raw_text = pytesseract.image_to_string(image, config='--oem 3 --psm 3')
+                        raw_clean = "".join([c for c in raw_text if c.isalnum() or c in ['-', ' ']]).strip()
                         
-                        if len(clean) >= 3: # العثور على نص معتبر
-                            extracted_text = clean
-                            break
-                    if extracted_text:
-                        break
-
-                if extracted_text:
-                    db.insert_plate(extracted_text, 88.0)
-                    st.success(f"✅ **تم استخراج النص/اللوحة بنجاح:** `{extracted_text}`")
-                    with col2:
-                        st.image(enhanced_img, caption="الصورة المفلترة المستخدمة بالقراءة", use_container_width=True)
-                else:
-                    st.warning("⚠️ لم يتحدد النص تلقائياً من كامل الصورة. يُفضل قص الجزء الخاص باللوحة فقط لرفع الدقة.")
+                        if len(raw_clean) >= 2:
+                            db.insert_plate(raw_clean, 85.0)
+                            st.success(f"✅ **تم استخراج رقم اللوحة بنجاح:** `{raw_clean}`")
+                        else:
+                            st.warning("⚠️ لم يتم العثور على نص واضح، يرجى تجربة رفع صورة أقرب للوحة السيارة.")
+                except Exception as e:
+                    st.error(f"حدث خطأ أثناء المعالجة: {str(e)}")
 
 with tab2:
     st.subheader("سجلات قاعدة البيانات (Database Logs)")
