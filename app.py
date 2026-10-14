@@ -1,37 +1,21 @@
 import streamlit as st
 import numpy as np
-from PIL import Image, ImageEnhance, ImageFilter
+from PIL import Image, ImageEnhance, ImageOps
 import pytesseract
 import pandas as pd
 import database as db
 
-# تحديد مسار محرك Tesseract على نظام Linux الخاص بـ Streamlit Cloud
+# مسار tesseract المعتمد في Streamlit Cloud
 pytesseract.pytesseract.tesseract_cmd = '/usr/bin/tesseract'
 
-# تهيئة قاعدة البيانات
 try:
     db.init_db()
 except Exception:
     pass
 
-st.set_page_config(
-    page_title="نظام ALPR المستقر للتعرف على اللوحات",
-    page_icon="🚗",
-    layout="wide"
-)
-
+st.set_page_config(page_title="نظام ALPR المستقر", page_icon="🚗", layout="wide")
 st.title("🚗 نظام التعرف وإدارة لوحات السيارات (ALPR System)")
 
-# وظيفة تحسين جودة الصورة للـ OCR باستخدام Pillow فقط (بدون OpenCV)
-def preprocess_image_pil(image):
-    # تحويل الصورة إلى أبيض وأسود (Grayscale)
-    gray = image.convert('L')
-    # زيادة التباين (Contrast) لتوضيح الأرقام
-    enhancer = ImageEnhance.Contrast(gray)
-    enhanced = enhancer.enhance(2.0)
-    return enhanced
-
-# التبويبات الرئيسية
 tab1, tab2 = st.tabs(["🔍 فحص وتحليل صورة", "📊 سجل اللوحات المكتشفة"])
 
 with tab1:
@@ -46,24 +30,37 @@ with tab1:
             st.image(image, caption="الصورة المرفوعة", use_container_width=True)
 
         if st.button("بدء عملية الفحص واستخراج رقم اللوحة", type="primary"):
-            with st.spinner("جاري معالجة الصورة واستخراج النص..."):
-                # معالجة الصورة أولاً لزيادة دقة القراءة
-                processed_img = preprocess_image_pil(image)
+            with st.spinner("جاري تحليل الصورة وتجربة الخوارزميات المختلفة..."):
+                extracted_text = ""
                 
-                # إعدادات Tesseract لقراءة الأرقام والحروف بأعلى دقة
-                custom_config = r'--oem 3 --psm 6'
-                text = pytesseract.image_to_string(processed_img, config=custom_config)
-                
-                # تنظيف النص المستخرج
-                clean_text = "".join([c for c in text if c.isalnum() or c in ['-', ' ']]).strip()
+                # قائمة بالتجريبية: الصورة الأصلية، الصورة المحسنة التباين، الصورة الرمادية
+                gray_img = ImageOps.grayscale(image)
+                enhancer = ImageEnhance.Contrast(gray_img)
+                enhanced_img = enhancer.enhance(2.5)
 
-                if len(clean_text) > 1:
-                    db.insert_plate(clean_text, 90.0)
-                    st.success(f"✅ **تم استخراج رقم اللوحة بنجاح:** `{clean_text}`")
+                sources_to_try = [image, gray_img, enhanced_img]
+                psm_modes = ['--psm 6', '--psm 11', '--psm 3']
+
+                # محاولة القراءة بأكثر من النمط
+                for img_src in sources_to_try:
+                    for psm in psm_modes:
+                        config = f'{psm} -c tessedit_char_whitelist=0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz'
+                        text = pytesseract.image_to_string(img_src, config=config)
+                        clean = "".join([c for c in text if c.isalnum() or c in ['-', ' ']]).strip()
+                        
+                        if len(clean) >= 3: # العثور على نص معتبر
+                            extracted_text = clean
+                            break
+                    if extracted_text:
+                        break
+
+                if extracted_text:
+                    db.insert_plate(extracted_text, 88.0)
+                    st.success(f"✅ **تم استخراج النص/اللوحة بنجاح:** `{extracted_text}`")
                     with col2:
-                        st.image(processed_img, caption="الصورة المعالجة للـ OCR", use_container_width=True)
+                        st.image(enhanced_img, caption="الصورة المفلترة المستخدمة بالقراءة", use_container_width=True)
                 else:
-                    st.warning("⚠️ لم يتم العثور على أرقام أو نصوص واضحة، حاول رفع صورة أوضح للوحة.")
+                    st.warning("⚠️ لم يتحدد النص تلقائياً من كامل الصورة. يُفضل قص الجزء الخاص باللوحة فقط لرفع الدقة.")
 
 with tab2:
     st.subheader("سجلات قاعدة البيانات (Database Logs)")
@@ -72,14 +69,8 @@ with tab2:
         if logs:
             df = pd.DataFrame(logs, columns=["المعرف", "رقم اللوحة", "نسبة الدقة %", "تاريخ ووقت التسجيل"])
             st.dataframe(df, use_container_width=True)
-
             csv = df.to_csv(index=False).encode('utf-8-sig')
-            st.download_button(
-                label="📥 تحميل السجل كملف CSV",
-                data=csv,
-                file_name='plates_log.csv',
-                mime='text/csv'
-            )
+            st.download_button(label="📥 تحميل السجل CSV", data=csv, file_name='plates_log.csv', mime='text/csv')
         else:
             st.info("لا توجد سجلات محفوظة حالياً.")
     except Exception:
