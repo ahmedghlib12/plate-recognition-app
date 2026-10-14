@@ -2,6 +2,10 @@ import streamlit as st
 import numpy as np
 from PIL import Image
 import pytesseract
+import pytesseract
+
+# تحديد مسار tesseract على سيرفرات Linux السحابية
+pytesseract.pytesseract.tesseract_cmd = '/usr/bin/tesseract'
 from ultralytics import YOLO
 import pandas as pd
 import database as db
