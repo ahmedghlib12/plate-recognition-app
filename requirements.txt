@@ -1,7 +1,11 @@
 streamlit
-pytesseract
 opencv-python-headless
 numpy
 pandas
-Pillow
-pytest
+pillow
+pytesseract
+
+# اختياري: يرفع الدقة في الظروف الصعبة (شبكة عصبية عميقة)
+# لكنه ثقيل (PyTorch) وقد لا يعمل على الخطة المجانية لـ Streamlit Cloud.
+# فعّله بإزالة علامة # من السطر التالي:
+# easyocr
