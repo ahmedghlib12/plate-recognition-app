@@ -33,6 +33,12 @@ if platform.system() == "Windows":
 # على لينكس (Streamlit Cloud) يتم إيجاده تلقائياً من PATH
 
 try:
+    from plate_detector import detect_with_yolo, model_available as yolo_available
+except Exception:  # onnxruntime غير مثبت
+    def yolo_available():
+        return False
+
+try:
     import easyocr  # اختياري: شبكة عصبية عميقة
 
     HAS_EASYOCR = True
@@ -443,7 +449,14 @@ with st.spinner("جاري التحليل..."):
     if whole:
         plates = [(1.0, None, image)]
     else:
-        found = detect_plates(image, top_n=n_cands)
+        found = []
+        if yolo_available():
+            try:
+                found = detect_with_yolo(image, top_n=n_cands)
+            except Exception as e:
+                st.warning(f"تعذر تشغيل نموذج YOLO: {e}")
+        if not found:  # احتياط: الكشف الكلاسيكي
+            found = detect_plates(image, top_n=n_cands)
         plates = [(s, b, warp_plate(image, b)) for s, b in found]
         if not plates:
             st.warning("لم يتم كشف لوحة تلقائياً، سيتم تحليل الصورة كاملة. "
@@ -510,5 +523,4 @@ if final_text:
                          "confidence": round(best["conf"], 1),
                          "agreement": f"{best['agree']}/{best['total']}"}])
     st.download_button("⬇️ تنزيل النتيجة (CSV)",
-                       out.to_csv(index=False).encode("utf-8-sig"),
-                       "plate_result.csv", "text/csv")
+                       out.to_c
