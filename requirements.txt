@@ -4,6 +4,7 @@ numpy
 pandas
 pillow
 pytesseract
+onnxruntime
 
 # اختياري: يرفع الدقة في الظروف الصعبة (شبكة عصبية عميقة)
 # لكنه ثقيل (PyTorch) وقد لا يعمل على الخطة المجانية لـ Streamlit Cloud.
