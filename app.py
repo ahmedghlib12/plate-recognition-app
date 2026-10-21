@@ -522,5 +522,6 @@ if final_text:
     out = pd.DataFrame([{"plate": final_text,
                          "confidence": round(best["conf"], 1),
                          "agreement": f"{best['agree']}/{best['total']}"}])
-    st.download_button("⬇️ تنزيل النتيجة (CSV)",
-                       out.to_c
+    st.download_button("تنزيل النتيجة (CSV)",
+                       out.to_csv(index=False).encode("utf-8-sig"),
+                       "plate_result.csv", "text/csv")
